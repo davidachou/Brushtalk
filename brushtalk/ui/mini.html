@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Brushtalk recording</title>
+    <link rel="stylesheet" href="/static/ink.css" />
+    <link rel="stylesheet" href="/static/mini.css" />
+    <script src="/static/ink.js"></script>
+  </head>
+  <body>
+    <!-- In low key this same page shows only the status character, with the window made small to fit: see .tiny in mini.css. -->
+    <div id="bar">
+      <button id="time-btn" title="Open Brushtalk">
+        <canvas id="glyph" class="glyph" width="192" height="192"></canvas>
+        <span id="time">00:00</span>
+      </button>
+      <div id="meters">
+        <div class="tags"><span class="tag you">You</span><span class="tag them" id="them-row">Them</span></div>
+        <canvas id="wave"></canvas>
+      </div>
+      <button id="health" hidden></button>
+      <button id="pause" class="round" title="Pause" aria-label="Pause"></button>
+      <button id="stop" title="Stop recording">Stop</button>
+      <button id="cancel" class="round plain" title="Stop and delete this recording" aria-label="Stop and delete this recording"></button>
+      <button id="hide" class="round plain" title="Hide this bar. Recording continues." aria-label="Hide this bar"></button>
+    </div>
+    <div id="prompt-bar" hidden>
+      <div id="p-mark"><canvas id="p-glyph" class="glyph" width="192" height="192"></canvas></div>
+      <div id="p-words">
+        <div id="p-title"></div>
+        <div id="p-line">
+          <div id="p-sub"></div>
+          <button id="p-undo" hidden>Undo</button>
+        </div>
+      </div>
+      <div id="p-meter"><canvas id="p-wave"></canvas></div>
+      <button id="p-see" class="soft">See it</button>
+      <button id="p-pause" class="soft"></button>
+      <button id="p-stop">Finish</button>
+      <button id="p-close" class="round plain" aria-label="Close"></button>
+    </div>
+    <script src="/static/mini.js"></script>
+  </body>
+</html>

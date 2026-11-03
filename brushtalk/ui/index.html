@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Brushtalk</title>
+    <link rel="stylesheet" href="/static/ink.css" />
+    <link rel="stylesheet" href="/static/app.css" />
+    <script src="/static/ink.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div id="brand"><img src="/static/logo.png" alt="" /><span>Brushtalk</span></div>
+        <div id="record-slot"></div>
+        <label class="search">
+          <span id="search-icon"></span>
+          <input id="search" type="search" placeholder="Search" aria-label="Search meetings and notes" autocomplete="off" />
+        </label>
+        <nav id="meeting-list" aria-label="Meetings"></nav>
+        <footer id="side-footer">
+          <button id="home-btn" class="ghost"></button>
+          <button id="prompts-btn" class="ghost"></button>
+          <button id="tests-btn" class="ghost"></button>
+          <button id="settings-btn" class="ghost"></button>
+        </footer>
+      </aside>
+      <main id="main"></main>
+    </div>
+    <div id="modal-root"></div>
+    <div id="toast-root" role="status" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

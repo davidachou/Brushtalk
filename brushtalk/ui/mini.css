@@ -1,0 +1,378 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  background-image: var(--grain);
+  color: var(--text);
+  font: 13px/1.2 var(--font);
+  user-select: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The recording bar */
+
+#bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 8px 0 6px;
+}
+
+#time-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 2px 6px 2px 2px;
+  border-radius: 6px;
+}
+
+#time-btn:hover,
+.round:hover {
+  background: var(--hover);
+}
+
+#time {
+  font-family: var(--font-big);
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+#meters {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 42px;
+}
+
+.tags {
+  display: grid;
+  gap: 8px;
+  flex: none;
+}
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+.tag.you {
+  color: var(--you);
+}
+
+.tag.them {
+  color: var(--them);
+}
+
+#wave,
+#p-wave {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+/* What's wrong takes the wave's place, because a wave moving on regardless would say all is well. */
+#health {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 4px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+#health:hover {
+  background: var(--hover);
+}
+
+#health.error,
+#p-sub[data-kind="error"] {
+  color: var(--you);
+  font-weight: 700;
+}
+
+#health.warn,
+#p-sub[data-kind="warn"] {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+#health.note {
+  color: var(--muted);
+}
+
+.trouble {
+  box-shadow: inset 0 0 0 2px var(--red);
+}
+
+.round {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 6px;
+}
+
+.round.plain {
+  width: 22px;
+  color: var(--muted);
+}
+
+#stop,
+#p-stop {
+  flex: none;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 6px;
+  background: var(--red);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+#stop:hover,
+#p-stop:hover {
+  background: var(--red-hover);
+}
+
+#stop:disabled {
+  opacity: 0.6;
+}
+
+/* Deleting takes two clicks, because this sits right beside Stop. The first turns it into this. */
+#cancel.armed {
+  width: auto;
+  padding: 0 8px;
+  border: 1px solid var(--red-line);
+  color: var(--you);
+  font-weight: 600;
+}
+
+#cancel.armed:hover {
+  border-color: transparent;
+  background: var(--red);
+  color: var(--on-accent);
+}
+
+/* The prompt bar */
+
+#prompt-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 8px 0 6px;
+}
+
+#prompt-bar.marked #p-title {
+  color: var(--amber);
+}
+
+#prompt-bar.marked #p-sub {
+  color: var(--text);
+}
+
+#prompt-bar.marked #p-undo {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+#p-mark.copy-pop {
+  animation: copy-pop 0.34s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+@keyframes copy-pop {
+  0% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+#p-mark {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  flex: none;
+}
+
+#p-mark .seal {
+  width: 42px;
+  height: 42px;
+  margin: 2px;
+}
+
+#p-words {
+  flex: 1;
+  min-width: 0;
+}
+
+#p-title {
+  overflow: hidden;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#p-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+  margin-top: 2px;
+}
+
+#p-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#p-undo {
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--raised);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+#p-undo:hover {
+  background: var(--hover);
+  border-color: var(--faint);
+}
+
+#p-meter {
+  display: flex;
+  width: 62px;
+  height: 36px;
+  flex: none;
+}
+
+.soft {
+  flex: none;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--raised);
+  font-weight: 500;
+}
+
+.soft:hover {
+  background: var(--hover);
+  border-color: var(--faint);
+}
+
+/* Low key: only the status character, in a window just big enough for it. A click brings out the full bar. */
+
+.tiny #bar,
+.tiny #prompt-bar {
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+.tiny #time-btn {
+  padding: 0;
+}
+
+.tiny #time,
+.tiny #meters,
+.tiny #health,
+.tiny #pause,
+.tiny #stop,
+.tiny #cancel,
+.tiny #hide,
+.tiny #p-words,
+.tiny #p-meter,
+.tiny #p-see,
+.tiny #p-pause,
+.tiny #p-stop,
+.tiny #p-close {
+  display: none !important;
+}
+
+.tiny #p-mark {
+  width: 22px;
+  height: 22px;
+}
+
+.tiny .glyph {
+  width: 22px !important;
+  height: 22px !important;
+}
+
+.tiny #p-mark .seal {
+  width: 20px !important;
+  height: 20px !important;
+  margin: 1px;
+}
+
+.digit {
+  display: inline-block;
+  width: 0.46em;
+  text-align: center;
+}
+
+.colon {
+  display: inline-block;
+  width: 0.26em;
+  text-align: center;
+}

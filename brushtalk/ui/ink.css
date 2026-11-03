@@ -1,0 +1,248 @@
+/* The look, shared by the main window and the floating bar: fonts and colours. Black ink is the default; rice paper is the daytime theme.
+   The colours come from traditional ink painting: 墨 ink, 宣紙 rice paper, 朱砂 cinnabar, 印泥 seal red (stamps only),
+   藤黃 gamboge (check this), 石綠 malachite (it worked), 花青 indigo (the other side of a call, links, focus). */
+
+@font-face {
+  font-family: "Instrument Sans";
+  src: url("/static/fonts/InstrumentSans.ttf") format("truetype");
+  font-weight: 400 700;
+  font-stretch: 75% 100%;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/static/fonts/JetBrainsMono.ttf") format("truetype");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Big Shoulders Display";
+  src: url("/static/fonts/BigShouldersDisplay.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --font: "Instrument Sans", "Microsoft JhengHei UI", "Microsoft JhengHei", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Microsoft JhengHei UI", "Microsoft JhengHei", Consolas, monospace;
+  --font-big: "Big Shoulders Display", "Instrument Sans", "Microsoft JhengHei UI", "Microsoft JhengHei", sans-serif;
+
+  --bg: #0b0b0e;
+  --panel: #141417;
+  --side: #08080a;
+  --raised: #1e1e23;
+  --field: #0e0e11;
+  --hover: rgba(238, 232, 218, 0.06);
+  --selected: rgba(238, 232, 218, 0.085);
+  --text: #eee8da;
+  --muted: #b9b3a6;
+  --faint: #8a857a;
+  --border: #2c2c33;
+  --track: #26262c;
+  --accent: #ff3b1f;
+  --accent-hover: #ff5335;
+  --on-accent: #140503;
+  --link: #8fb0d3;
+  --focus: #8fb0d3;
+  --red: #ff3b1f;
+  --red-hover: #ff5335;
+  --red-soft: rgba(255, 59, 31, 0.13);
+  --red-line: rgba(255, 59, 31, 0.5);
+  --you: #ff8a73;
+  --them: #8fb0d3;
+  --you-fill: #ff3b1f;
+  --them-fill: #8fb0d3;
+  --you-soft: rgba(255, 59, 31, 0.15);
+  --them-soft: rgba(143, 176, 211, 0.15);
+  --amber: #f2cc7a;
+  --amber-soft: rgba(242, 204, 122, 0.12);
+  --gamboge: #f2cc7a;
+  --green: #7cc9a8;
+  --chart: #eee8da;
+  --grid: rgba(255, 59, 31, 0.2);
+  --grid-edge: rgba(255, 59, 31, 0.34);
+  --toast-bg: #eee8da;
+  --toast-text: #141417;
+  --shadow: 0 12px 38px rgba(0, 0, 0, 0.62);
+  --veil: rgba(4, 4, 6, 0.62);
+  --grain: url("/static/textures/grain-ink.png");
+  --radius: 8px;
+
+  /* What the brush and the wave paint with. Plain hex, because ink.js reads them. */
+  --glyph-live: #ff3b1f;
+  --glyph-hot: #fffaf0;
+  --glyph-still: #eee8da;
+  --glyph-problem: #f2cc7a;
+  --glyph-faint: #3d3d45;
+  --wave-line: #fff6e6;
+  --wave-line-glow: #ffe8bf;
+  --wave-body: #a9a396;
+  --wave-you: #ff5a3c;
+  --wave-you-glow: #ff3b1f;
+  --wave-them: #a9c6e4;
+  --wave-them-glow: #8fb0d3;
+}
+
+:root[data-theme="paper"] {
+  color-scheme: light;
+  --bg: #f1ecdf;
+  --panel: #f9f6ee;
+  --side: #e9e3d3;
+  --raised: #e8e2d2;
+  --field: #fdfbf5;
+  --hover: rgba(40, 30, 14, 0.06);
+  --selected: rgba(40, 30, 14, 0.085);
+  --text: #1a1711;
+  --muted: #57524a;
+  --faint: #696357;
+  --border: #d4cdbb;
+  --track: #ddd6c5;
+  --accent: #c8321a;
+  --accent-hover: #b52b15;
+  --on-accent: #fff8ee;
+  --link: #2a5885;
+  --focus: #2a5885;
+  --red: #c8321a;
+  --red-hover: #b52b15;
+  --red-soft: rgba(200, 50, 26, 0.1);
+  --red-line: rgba(200, 50, 26, 0.5);
+  --you: #a92711;
+  --them: #2a5885;
+  --you-fill: #c8321a;
+  --them-fill: #2a5885;
+  --you-soft: rgba(200, 50, 26, 0.11);
+  --them-soft: rgba(42, 88, 133, 0.12);
+  --amber: #7d5200;
+  --amber-soft: rgba(190, 140, 40, 0.17);
+  --gamboge: #d99a1c;
+  --green: #1a6b4f;
+  --chart: #1a1711;
+  --grid: rgba(200, 50, 26, 0.2);
+  --grid-edge: rgba(200, 50, 26, 0.38);
+  --toast-bg: #1a1711;
+  --toast-text: #f4efe2;
+  --shadow: 0 10px 30px rgba(60, 44, 20, 0.22);
+  --veil: rgba(60, 50, 34, 0.38);
+  --grain: url("/static/textures/grain-paper.png");
+
+  --glyph-live: #c8321a;
+  --glyph-hot: #ff8a4a;
+  --glyph-still: #1a1711;
+  --glyph-problem: #8a5a00;
+  --glyph-faint: #cbc3b0;
+  --wave-line: #1a1711;
+  --wave-line-glow: #1a1711;
+  --wave-body: #766f60;
+  --wave-you: #c8321a;
+  --wave-you-glow: #c8321a;
+  --wave-them: #2a5885;
+  --wave-them-glow: #2a5885;
+}
+
+::selection {
+  background: rgba(255, 59, 31, 0.36);
+}
+
+[data-theme="paper"] ::selection {
+  background: rgba(200, 50, 26, 0.24);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background: var(--border) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--faint) padding-box;
+}
+
+.glyph {
+  display: block;
+  flex: none;
+}
+
+.seal {
+  display: block;
+  flex: none;
+  transform: rotate(-5deg);
+  user-select: none;
+  pointer-events: none;
+}
+
+.seal.stamped {
+  animation: stamp 0.32s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+@keyframes stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.9) rotate(-11deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(0.96) rotate(-4deg);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(-5deg);
+  }
+}
+
+/* Something to look at. You'll be looking at something else, so it washes over twice to catch the corner of your eye, and stays marked
+   while it says what happened. Gold is for a look, and red for something gone wrong. With motion off, only the marking shows. */
+.marked:not(.trouble) {
+  background: var(--amber-soft);
+  box-shadow: inset 0 0 0 2px var(--gamboge);
+}
+
+.wash::after,
+.wash-alarm::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--gamboge);
+  opacity: 0;
+  pointer-events: none;
+  animation: wash 1.5s ease-out;
+}
+
+.wash-alarm::after {
+  background: var(--red);
+}
+
+@keyframes wash {
+  0% {
+    opacity: 0.6;
+  }
+  28% {
+    opacity: 0.05;
+  }
+  42% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+[data-motion="off"] *,
+[data-motion="off"] *::before,
+[data-motion="off"] *::after {
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001s !important;
+}

@@ -1,0 +1,345 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  background-image: var(--grain);
+  color: var(--text);
+  font: 13px/1.35 var(--font);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 10px;
+  outline: none;
+}
+
+/* The heading, which is also where you drag it from */
+
+#head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#seal {
+  width: 30px;
+  height: 30px;
+  cursor: grab;
+}
+
+#what {
+  flex: 1;
+  min-width: 0;
+  cursor: grab;
+}
+
+#title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#copied {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.round {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.round:hover {
+  background: var(--hover);
+}
+
+/* The four kinds of edit, as brush characters */
+
+#tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+.tile:hover {
+  border-color: var(--faint);
+}
+
+.tile .glyph {
+  width: 38px;
+  height: 38px;
+}
+
+.tile .name {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tile kbd,
+.chip kbd {
+  margin-right: 4px;
+  color: var(--faint);
+  font: 10.5px var(--font-mono);
+}
+
+.tile.on {
+  border-color: var(--accent);
+  background: var(--red-soft);
+}
+
+.tile.on .name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+#about {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* The choices that go with it */
+
+#options:empty {
+  display: none;
+}
+
+#options {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  align-items: start;
+  gap: 8px;
+}
+
+.label {
+  padding-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.chip:hover {
+  border-color: var(--faint);
+  color: var(--text);
+}
+
+.chip.on {
+  border-color: var(--accent);
+  background: var(--red-soft);
+  color: var(--text);
+}
+
+.chip.as-is.on {
+  border-color: var(--faint);
+  background: var(--selected);
+}
+
+.note {
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+#blanks-text {
+  padding-top: 3px;
+  color: var(--amber);
+  font-size: 12.5px;
+}
+
+#blanks-text.none {
+  color: var(--you);
+}
+
+/* Typing or saying how */
+
+#say {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+#asked {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  max-height: 96px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  resize: none;
+}
+
+#asked::placeholder {
+  color: var(--faint);
+}
+
+#mic {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--raised);
+  color: var(--muted);
+}
+
+#mic:hover:not(:disabled) {
+  border-color: var(--faint);
+  color: var(--text);
+}
+
+#mic:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+#mic.live {
+  border-color: var(--accent);
+  background: var(--red-soft);
+  color: var(--text);
+}
+
+#listening {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+#level {
+  width: 64px;
+  height: 18px;
+  flex: none;
+}
+
+#message {
+  color: var(--amber);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* Sending it */
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+#summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+#go {
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+#go:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+#go:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.enter {
+  margin-left: 2px;
+  font-weight: 400;
+}
+
+#keys {
+  color: var(--faint);
+  font-size: 11px;
+  text-align: center;
+}

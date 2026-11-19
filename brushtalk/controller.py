@@ -81,6 +81,17 @@ class Controller:
         self.prompt_hold: subprocess.Popen | None = None
         self.prompt_cancelled = False
         self.prompt_second_try = False  # hearing or writing an old prompt again, rather than one you've just said
+        self.prompt_copy_for = "proofread"  # what a wait for a copy is for: a plain proofread, or the edit card
+        # The edit card, while it's open: what you copied, and what you've said to it.
+        self.picker: dict | None = None
+        self.picker_opens = 0
+        self.picker_recorder: Recorder | None = None
+        self.picker_hold: subprocess.Popen | None = None
+        self.picker_process: subprocess.Popen | None = None
+        self.picker_timer: threading.Timer | None = None
+        self.picker_take = 0  # each time it listens, so words heard for a card that has since closed don't land in the next one
+        # The desktop app sets this: which app you were in when the card opened, and where it thinks you'll paste.
+        self.which_app = None
         self.version = 0
         self.queue: queue.Queue = queue.Queue()
         self.queued: list[str] = []
@@ -138,7 +149,7 @@ class Controller:
 
     def sound_when_quiet(self, name: str) -> None:
         """For what finishes by itself, at any moment. If anything is being recorded it stays silent, and the notice still shows."""
-        if not (self.recorder or self.prompt_recorder or self.model_test or self.audio_test):
+        if not (self.recorder or self.prompt_recorder or self.model_test or self.audio_test or self.picker_recorder):
             self._sound(name)
 
     def recording_went_wrong(self) -> None:
@@ -188,8 +199,8 @@ class Controller:
         return self.recorder is not None
 
     def is_capturing(self) -> bool:
-        """Anything at all being recorded: a meeting or note, a prompt or a test clip."""
-        return bool(self.recorder or self.prompt_recorder or self.model_test)
+        """Anything at all being recorded: a meeting or note, a prompt, a test clip, or what you're saying to the edit card."""
+        return bool(self.recorder or self.prompt_recorder or self.model_test or self.picker_recorder)
 
     def start_recording(self, title: str = "", mode: str = "meeting") -> dict:
         """mode is "meeting", or "solo" for talking alone, which records only the mic."""
@@ -202,6 +213,9 @@ class Controller:
             # A real call matters more than a test clip. A prompt you were dictating gets finished behind it, as if you'd pressed Finish.
             self.drop_model_test()
             self.stop_prompt()
+            # The call gets the mic. The edit card stays open, to type into instead.
+            if self.picker_recorder or (self.picker and self.picker["hearing"]):
+                self._end_picker_take("Your recording has the mic now, so type it instead.")
             meta = storage.create(title, mode)
             path = storage.folder(meta["id"])
             try:
@@ -299,6 +313,8 @@ class Controller:
         """The finish shortcut: whatever is going is done, whether it's paused or not."""
         if self.model_test:
             self.stop_model_test()
+        elif self.picker_recorder:
+            self.picker_listen()
         elif self.prompt_recorder:
             self.stop_prompt()
         elif self.is_recording():
@@ -328,6 +344,8 @@ class Controller:
         with self.lock:
             if self.recorder:
                 raise AppError("Stop recording before testing your audio.")
+            # You've moved on from the edit card, and the test needs the mic.
+            self.close_picker()
             # The same check as everything else that records, so nothing ends up with two recordings at once.
             if self.prompt_recorder:
                 raise AppError("Finish the prompt you're dictating first.")
@@ -364,6 +382,7 @@ class Controller:
             if self.prompt_recorder:
                 raise AppError("Finish dictating your prompt first.")
             self._forget_cancelled()
+            self.close_picker()
             self.stop_audio_test()
             meta = modeltests.create(language, hint)
             path = modeltests.folder(meta["id"])
@@ -511,10 +530,11 @@ class Controller:
         """kind is "prompt", "code" for the code itself, or "proofread" for proofreading with what you say about how. They go the same way
         until the AI is asked to write. Proofreading always uses what you copy, since the text is the point."""
         with self.lock:
-            # You've moved on from the proofread that was waiting for you to copy something, or the dictation you cancelled.
+            # You've moved on from the proofread that was waiting for you to copy something, the edit card, or the dictation you cancelled.
             self._forget_cancelled()
             if self.prompt_stage == "copy":
                 self._set_prompt_stage(None, None)
+            self.close_picker()
             if self.recorder and kind == "proofread":
                 return self.proofread(typed)
             if self.recorder:
@@ -801,9 +821,16 @@ class Controller:
             if self.prompt_stage in ("hearing", "writing"):
                 raise AppError("Still writing your last one.")
             self.prompt_kind = "proofread"
+            # With the edit card open, it's that text, done the plain way.
+            if self.picker and not typed.strip():
+                text, source = self.picker["text"], self.picker["source"]
+                self.close_picker()
+                return self._start_proofread(text, source)
+            self.close_picker()
             text = typed if typed.strip() else self.clipboard.recent(COPIED_JUST_NOW)
             if text:
                 return self._start_proofread(text, "typed" if typed.strip() else "copied")
+            self.prompt_copy_for = "proofread"
             self.clipboard.on_copy = self._on_copied_to_proofread
             self.prompt_timer = threading.Timer(COPY_WAIT, self._stop_waiting_for_copy)
             self.prompt_timer.daemon = True
@@ -813,7 +840,7 @@ class Controller:
 
     def _on_copied_to_proofread(self, text: str) -> None:
         with self.lock:
-            if self.prompt_stage == "copy":
+            if self.prompt_stage == "copy" and self.prompt_copy_for == "proofread":
                 self._start_proofread(text, "copied")
 
     def _stop_waiting_for_copy(self) -> None:
@@ -835,6 +862,271 @@ class Controller:
         self.sound_when_quiet("copied")
         self._write_on_its_own_thread(meta["id"])
         return {"stage": "writing", "id": meta["id"]}
+
+    # ------------------------------------------------------------- the edit card
+
+    def picker_key(self) -> dict | None:
+        """The Proofread shortcut. It opens the edit card, and with the card open it starts and stops the mic. As every shortcut does, it pauses
+        and resumes a prompt you're dictating, and ends a model test."""
+        if self.model_test:
+            self.stop_model_test()
+            return None
+        if self.picker:
+            return self.picker_listen()
+        if self.prompt_recorder:
+            self.pause_or_resume_prompt()
+            return None
+        return self.open_picker()
+
+    def open_picker(self, typed: str = "") -> dict:
+        """The card for choosing how to edit what you copied. It takes text typed into the window, or what you copied just now. Failing those it
+        waits for you to copy something, as the plain proofread does, so it never offers to edit something that was merely sitting on the clipboard."""
+        with self.lock:
+            self._forget_cancelled()
+            if self.picker:
+                return {"stage": "picker"}
+            # Asking again while it waits is changing your mind.
+            if self.prompt_stage == "copy" and not typed.strip():
+                self._set_prompt_stage(None, None)
+                return {"stage": None}
+            if self.prompt_recorder:
+                raise AppError("Finish the prompt you're dictating first.")
+            if self.prompt_stage in ("hearing", "writing"):
+                raise AppError("Still writing your last one.")
+            text = typed if typed.strip() else self.clipboard.recent(COPIED_JUST_NOW)
+            if text:
+                return self._show_picker(text, "typed" if typed.strip() else "copied")
+            self.prompt_kind = "proofread"
+            self.prompt_copy_for = "picker"
+            self.clipboard.on_copy = self._on_copied_for_picker
+            self.prompt_timer = threading.Timer(COPY_WAIT, self._stop_waiting_for_copy)
+            self.prompt_timer.daemon = True
+            self.prompt_timer.start()
+            self._set_prompt_stage(None, "copy")
+            return {"stage": "copy"}
+
+    def _on_copied_for_picker(self, text: str) -> None:
+        with self.lock:
+            if self.prompt_stage == "copy" and self.prompt_copy_for == "picker":
+                self._set_prompt_stage(None, None)
+                self._show_picker(text, "copied")
+
+    def _show_picker(self, text: str, source: str) -> dict:
+        if len(text) > prompts.TEXT_LIMIT:
+            message = f"Too long: {len(text):,} characters, and the limit is {prompts.TEXT_LIMIT:,}. Copy a smaller part. Your clipboard hasn't changed."
+            self._set_prompt_stage(None, "failed", message)
+            return {"stage": "failed", "message": message}
+        where = {}
+        if self.which_app:
+            try:
+                where = self.which_app() or {}
+            except Exception:
+                log.exception("Couldn't tell which app you were in")
+        shutil.rmtree(prompts.picker_dir(), ignore_errors=True)
+        self.picker_opens += 1
+        self.picker = {"text": text, "source": source, "blanks": prompts.blanks(text), "app": where.get("app", ""), "dest": where.get("dest", "email"), "heard": [], "hearing": False, "message": "", "opens": self.picker_opens}
+        # Copying something else while it's open means that's the one you want edited.
+        self.clipboard.on_copy = self._on_copied_while_picking
+        self.prompt_version += 1
+        self._emit("picker", open=True)
+        return {"stage": "picker"}
+
+    def _on_copied_while_picking(self, text: str) -> None:
+        with self.lock:
+            if self.picker and len(text) <= prompts.TEXT_LIMIT:
+                self.picker.update(text=text, source="copied", blanks=prompts.blanks(text))
+                self.prompt_version += 1
+                self._emit("picker_text")
+
+    def close_picker(self) -> None:
+        """Esc or ✕, or something else starting: nothing is sent, and anything it was hearing is thrown away."""
+        with self.lock:
+            if not self.picker:
+                return
+            self._end_picker_take()
+            self.picker = None
+            if self.clipboard.on_copy == self._on_copied_while_picking:
+                self.clipboard.on_copy = None
+            self.prompt_version += 1
+            self._emit("picker", open=False)
+
+    def picker_edit(self, choices: dict, asked: str = "") -> dict:
+        """Edit: the card closes, you're back where you were, and what you copied is edited the way you chose, with what you typed or said."""
+        with self.lock:
+            picker = self.picker
+            if not picker:
+                raise AppError("The card has closed. Press the shortcut again.")
+            if self.picker_recorder or picker["hearing"]:
+                raise AppError("Wait until it has heard what you said.")
+            picked = prompts.clean_picked(choices)
+            if picked["job"] == "fill" and not picker["blanks"]:
+                raise AppError("There are no [[blanks]] in what you copied, so there's nothing to fill in.")
+            meta = prompts.create("proofread")
+            prompts.add_text(meta["id"], picker["source"], picker["text"])
+            asked = asked.strip()
+            # What you typed or said is kept the way a fixed transcript is, so the prompt's page shows it and Proofread again uses it.
+            prompts.update(meta["id"], picked=picked, spoken=[], spoken_edited=asked or None)
+            self.close_picker()
+            self.prompt_kind = "proofread"
+            self.prompt_cancelled = False
+            self.prompt_second_try = False
+            self._set_prompt_stage(meta["id"], "writing")
+            self.sound_when_quiet("copied")
+            self._write_on_its_own_thread(meta["id"])
+            return {"stage": "writing", "id": meta["id"]}
+
+    def picker_mic_why(self) -> str | None:
+        """Why the card can't listen, if it can't."""
+        if self.recorder:
+            return "Your recording has the mic, so type it instead."
+        if self.prompt_recorder or self.model_test or self.audio_test:
+            return "Something else has the mic, so type it instead."
+        return None
+
+    def picker_listen(self) -> dict:
+        """The card's mic: the first press listens, the next turns what you said into words in the card's box."""
+        with self.lock:
+            picker = self.picker
+            if not picker:
+                raise AppError("The card has closed.")
+            if self.picker_recorder:
+                return self._hear_picker_take()
+            if picker["hearing"]:
+                raise AppError("Still turning what you said into words.")
+            why = self.picker_mic_why()
+            if why:
+                # Said on the card, where you're looking, rather than as an error from the shortcut.
+                picker["message"] = why
+                self.prompt_version += 1
+                self._emit("picker_message")
+                return {"listening": False, "message": why}
+            self.picker_take += 1
+            folder = prompts.picker_dir() / str(self.picker_take)
+            folder.mkdir(parents=True, exist_ok=True)
+            try:
+                recorder = Recorder(folder, self.settings["mic_device"], mic_only=True)
+                self._open_with_sound(recorder)
+            except Exception as exc:
+                log.exception("The edit card's mic couldn't start")
+                shutil.rmtree(folder, ignore_errors=True)
+                self._sound("problem")
+                raise AppError(f"The microphone couldn't start: {exc}") from exc
+            self.picker_recorder = recorder
+            self.picker_hold = self._start_hold(folder)
+            picker["message"] = ""
+            # Left talking by mistake, it stops by itself, as a prompt does.
+            self.picker_timer = threading.Timer(PROMPT_LIMIT, self._picker_time_up, args=(self.picker_take,))
+            self.picker_timer.daemon = True
+            self.picker_timer.start()
+            self.prompt_version += 1
+            self._emit("picker_listening")
+            return {"listening": True}
+
+    def _picker_time_up(self, take: int) -> None:
+        with self.lock:
+            if self.picker_recorder and take == self.picker_take:
+                self._hear_picker_take()
+
+    def _hear_picker_take(self) -> dict:
+        recorder, self.picker_recorder = self.picker_recorder, None
+        if self.picker_timer:
+            self.picker_timer.cancel()
+            self.picker_timer = None
+        take, folder = self.picker_take, prompts.picker_dir() / str(self.picker_take)
+        self._end_with_sound(recorder)
+        stats = self._stop_recorder(recorder, folder)
+        self.picker["hearing"] = True
+        self.prompt_version += 1
+        heard = stats["sound_seconds"]["mic"] >= MODEL_TEST_MIN_SOUND
+        threading.Thread(target=self._hear_for_picker, args=(take, folder, heard, self.picker["text"]), daemon=True, name="picker").start()
+        self._emit("picker_hearing")
+        return {"hearing": True}
+
+    def _hear_for_picker(self, take: int, folder: Path, heard: bool, text: str) -> None:
+        """Nothing it hears is kept: the words go into the card's box, where you can fix them, and the audio goes."""
+        words, problem = "", ""
+        try:
+            if not heard:
+                problem = "It didn't hear anything. Try again, or type it."
+            else:
+                storage.finalize_audio(folder)
+                held, self.picker_hold = self.picker_hold, None
+                code, error = self._run_worker(folder, self.settings["prompt_speech_engine"], self.settings["language"], False, False, lambda event: None, hint="talking", mic_only=True, extra_terms=prompts.names_from_text([text]), on_process=self._track_picker_process, held=held)
+                if take != self.picker_take:
+                    return
+                if code != 0:
+                    problem = f"{error or 'The speech model stopped unexpectedly.'} Type it instead."
+                else:
+                    spoken = json.loads((folder / "transcript.json").read_text(encoding="utf-8"))
+                    words = " ".join(line["text"].strip() for line in spoken).strip()
+                    problem = "" if words else "No words were heard. Try again, or type it."
+        except Exception as exc:
+            log.exception("Hearing what you said to the edit card failed")
+            problem = f"It couldn't hear that: {exc}"
+        finally:
+            self._release_picker_hold()
+            with self.lock:
+                if take == self.picker_take and self.picker:
+                    self.picker["hearing"] = False
+                    self.picker["message"] = problem
+                    if words:
+                        self.picker["heard"].append(words)
+                    self.prompt_version += 1
+                    self._emit("picker_heard")
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def _track_picker_process(self, process) -> bool:
+        self.picker_process = process
+        return True
+
+    def _release_picker_hold(self) -> None:
+        process, self.picker_hold = self.picker_hold, None
+        if process:
+            _kill_tree(process)
+            try:
+                process.wait(5)
+            except subprocess.TimeoutExpired:
+                log.warning("Whisper didn't stop when it was told to")
+
+    def _end_picker_take(self, message: str = "") -> None:
+        """Stops listening, or hearing, and throws away what it had."""
+        recorder, self.picker_recorder = self.picker_recorder, None
+        self.picker_take += 1
+        if self.picker_timer:
+            self.picker_timer.cancel()
+            self.picker_timer = None
+        if recorder:
+            self._stop_recorder(recorder, prompts.picker_dir())
+        if self.picker_process:
+            _kill_tree(self.picker_process)
+        self._release_picker_hold()
+        shutil.rmtree(prompts.picker_dir(), ignore_errors=True)
+        if self.picker:
+            self.picker.update(hearing=False, message=message)
+            self.prompt_version += 1
+
+    def picker_view(self) -> dict | None:
+        """What the card's page shows. Not the whole of what you copied, which can be long, and goes to every page several times a second."""
+        picker = self.picker
+        if not picker:
+            return None
+        listening = self.picker_recorder
+        return {
+            "opens": picker["opens"],
+            "words": " ".join(picker["text"].split())[: prompts.COPY_WORDS],
+            "chars": len(picker["text"]),
+            "blanks": [blank[:60] for blank in picker["blanks"][:12]],
+            "blank_count": len(picker["blanks"]),
+            "app": picker["app"],
+            "dest": picker["dest"],
+            "mic": self.picker_mic_why(),
+            "listening": bool(listening),
+            "level": listening.status()["levels"]["mic"] if listening else 0,
+            "hearing": picker["hearing"],
+            "heard": list(picker["heard"]),
+            "message": picker["message"],
+            "hotkey": self.settings["hotkey_proofread"],
+        }
 
     def _set_prompt_aside(self) -> None:
         """For quitting: nothing more happens to it now, and nothing is thrown away. The next start finds it, ready to try again."""
@@ -1014,11 +1306,16 @@ class Controller:
             )
             self._finish_with_clipboard(prompt_id, meta)
 
+    def _to_clipboard(self, meta: dict) -> bool:
+        """Format's tables and lists go on with a formatted copy beside the text, for email to paste as a real table."""
+        text, html = prompts.to_clipboard(meta)
+        return self.clipboard.write(text, html) if html is not None else self.clipboard.write(text)
+
     def _finish_with_clipboard(self, prompt_id: str, meta: dict) -> None:
         words = [item["word"] for item in prompts.checks(meta)]
         # Code's notes are on its page, and only what it can do gets in the way of pasting it, or that warning would come up all the time and stop meaning anything.
         count = len(words) + (0 if prompts.is_code(meta) else len(meta.get("unsure") or []))
-        message = "" if self.clipboard.write(prompts.to_paste(meta)) else "It couldn't reach the clipboard. Open it and press Copy."
+        message = "" if self._to_clipboard(meta) else "It couldn't reach the clipboard. Open it and press Copy."
         about = _about_code(meta) if prompts.is_code(meta) else _about_edits(meta) if prompts.is_proofread(meta) else ""
         self._set_prompt_stage(prompt_id, "ready", message, count, len(meta.get("added") or []), words, about)
 
@@ -1060,7 +1357,7 @@ class Controller:
         threading.Thread(target=work, daemon=True, name="prompt").start()
 
     def copy_prompt(self, prompt_id: str) -> bool:
-        return self.clipboard.write(prompts.to_paste(prompts.load(prompt_id)))
+        return self._to_clipboard(prompts.load(prompt_id))
 
     def forget_prompt(self, prompt_id: str) -> None:
         """It's been deleted, so the bar can't go on asking you to check it or offering to show it."""
@@ -1116,9 +1413,11 @@ class Controller:
                 "latest_copy": self.prompt_latest_copy,
                 "copy_flashes": self.prompt_copy_flashes,
                 "check_first": self.settings["prompt_check_first"],
+                "copy_for": self.prompt_copy_for,
                 "version": self.prompt_version,
                 "shows": self.prompt_shows,
             },
+            "picker": self.picker_view(),
             "model_test": {
                 "recording": dict(clip.status(), id=clip_id) if clip and clip_id else None,
                 "current": self.current_test,
@@ -1144,7 +1443,7 @@ class Controller:
 
     def devices(self) -> dict:
         """While recording, PortAudio can't be restarted, so the last list is shown."""
-        if not self.recorder and not self.audio_test and not self.model_test and not self.prompt_recorder:
+        if not self.recorder and not self.audio_test and not self.model_test and not self.prompt_recorder and not self.picker_recorder:
             try:
                 self.devices_cache = list_devices()
             except AudioStuck as exc:
@@ -1520,6 +1819,7 @@ class Controller:
         self.closing = True
         self.stop_audio_test()
         self.drop_model_test()
+        self.close_picker()
         self._set_prompt_aside()
         # Cancelled already: quitting before the time to undo is up doesn't keep it.
         self._forget_cancelled()
@@ -1547,6 +1847,15 @@ def _about_edits(meta: dict) -> str:
     """So that when nothing changed you know it's because nothing needed to. Only the very same text gets that: a change the count can't
     see, such as spacing, still says it was edited."""
     before, after = prompts.original(meta), meta.get("prompt", "")
+    picked = meta.get("picked") or {}
+    if picked.get("job") == "fill":
+        count = len(prompts.blanks(before))
+        return f"Filled {count} {'blank' if count == 1 else 'blanks'}"
+    if picked.get("job") == "format":
+        made = {"table": "Made a table", "list": "Made a list", "steps": "Made steps", "email": "Laid out as an email"}[picked.get("into", "table")]
+        return made + {"slack": ", for Slack", "plain": ", as plain text"}.get(picked.get("dest"), "") if picked.get("into") != "email" else made
+    if picked.get("job") == "translate":
+        return "Translated"
     if before == after:
         return "No changes needed"
     made = prompts.edits_made(before, after)

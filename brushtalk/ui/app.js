@@ -233,7 +233,7 @@ const MODES = [
   { key: "hotkey_solo", ch: "記", name: "Solo note", about: "Only your mic, for thinking out loud. You get notes.", start: () => startRecording("", "solo") },
   { key: "hotkey_prompt", ch: "言", name: "Prompt", about: "Talk and copy as you read. You get a clear prompt to paste.", start: () => startPromptAndShow() },
   { key: "hotkey_code", ch: "碼", name: "Code", about: "Talk and copy as you read. You get the code itself, and nothing else, to paste and run.", start: () => startPromptAndShow("code") },
-  { key: "hotkey_proofread", ch: "改", name: "Proofread", about: "Copy some text, and say how you want it edited if you like. You get the edited text, and nothing else, to paste.", start: () => startProofreadTalking() },
+  { key: "hotkey_proofread", ch: "改", name: "Proofread", about: "Copy some text, then choose how to edit it: polish it, fill in [[blanks]], make a table or translate it. You get the edited text, and nothing else, to paste.", start: () => openPicker() },
 ];
 
 function startButton(mode, big = false) {
@@ -2217,17 +2217,13 @@ function showProofread(started) {
   else setView("prompts");
 }
 
-// It listens, so you can say how you want it edited. What's in the box is the text, as if you'd copied it. During a recording the app
-// proofreads without listening instead, and that comes back looking like the above.
-async function startProofreadTalking() {
-  const started = await attempt(() => api("/api/prompts/start", { method: "POST", body: { typed: S.proofreadDraft || "", kind: "proofread" } }));
-  if (started?.stage !== undefined) {
-    showProofread(started);
-    return;
-  }
+// The edit card, which opens beside the mouse. Text in the box here goes to it instead of what you copied. With neither, the app waits for
+// you to copy something, and this page says so.
+async function openPicker() {
+  const started = await attempt(() => api("/api/picker", { method: "POST", body: { action: "open", text: S.proofreadDraft || "" } }));
   if (!started) return;
-  S.proofreadDraft = "";
-  setView("prompts");
+  if (started.stage === "picker") S.proofreadDraft = "";
+  else showProofread(started);
 }
 
 function togglePromptPause() {
@@ -2295,9 +2291,9 @@ async function renderPromptHome(main) {
       "section",
       { class: "card" },
       h("h2", {}, "Proofread"),
-      h("div", { class: "help" }, "Copy some text and press ", h("kbd", {}, S.settings.hotkey_proofread), ". Say how you want it edited if you like, such as “make it shorter”, then press ", h("kbd", {}, S.settings.hotkey_finish), ". When the small bar says it's ready, press Ctrl+V. All that gets pasted is the edited text."),
-      h("div", { class: "help" }, "To skip the mic, press ", h("kbd", {}, S.settings.hotkey_proofread_text), " instead: one press, and it proofreads what you copied. During a recording, either one works without listening."),
-      S.snap?.prompt?.stage === "copy" && banner("Copy the text to proofread, and it starts by itself."),
+      h("div", { class: "help" }, "Copy some text and press ", h("kbd", {}, S.settings.hotkey_proofread), ". A card opens beside your mouse: pick Polish, Fill in, Format or Translate and any options, or type or say how you want it, then press Enter. When the small bar says it's ready, press Ctrl+V. All that gets pasted is the edited text."),
+      h("div", { class: "help" }, "For a plain proofread straight away, press ", h("kbd", {}, S.settings.hotkey_proofread_text), " instead: one press, no card. Put a note in double brackets, such as [[ask how her mom is doing]], and it gets written for you."),
+      S.snap?.prompt?.stage === "copy" && banner(S.snap.prompt.copy_for === "picker" ? "Copy the text to edit, and the card opens by itself." : "Copy the text to proofread, and it starts by itself."),
       h(
         "div",
         { class: "field" },
@@ -2307,8 +2303,8 @@ async function renderPromptHome(main) {
       h(
         "div",
         { class: "row-actions" },
-        h("button", { class: "test-go", onclick: startProofreadTalking }, icon("mic"), "Proofread"),
-        h("button", { class: "test-go", onclick: () => startProofread(S.proofreadDraft) }, icon("edit"), "Without talking"),
+        h("button", { class: "test-go", onclick: openPicker }, icon("edit"), "Choose how"),
+        h("button", { class: "test-go", onclick: () => startProofread(S.proofreadDraft) }, icon("check"), "Proofread at once"),
       ),
     ),
     data.prompts.length > 0 &&
@@ -2611,6 +2607,17 @@ function hearingFailed(prompt) {
   return isProofread(prompt) && Boolean(prompt.error) && !prompt.prompt && prompt.can_hear && !prompt.spoken && !prompt.spoken_text.trim() && prompt.text.length > 0;
 }
 
+// What was chosen on the edit card, in a few words, for the page of what it made.
+function pickedWords(picked) {
+  if (!picked) return "";
+  const head = {
+    fill: "Fill in",
+    format: `Format: ${{ table: "Table", list: "List", steps: "Steps", email: "Email layout" }[picked.into] || "Table"}${picked.into !== "email" && picked.dest && picked.dest !== "email" ? `, for ${picked.dest === "slack" ? "Slack" : "plain text"}` : ""}`,
+    translate: `Translate into ${picked.lang === "chinese" ? "繁體中文" : "English"}`,
+  }[picked.job] || "Polish";
+  return [head, ...[picked.formality, picked.tone, picked.length].filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1))].join(" · ");
+}
+
 function writeItLabel(prompt) {
   if (prompt.status === "check") return "Write it";
   if (!isProofread(prompt)) return "Write again";
@@ -2639,7 +2646,7 @@ function drawPrompt() {
   const working = PROMPT_WORKING.includes(prompt.status);
   $("#prompt-head").replaceChildren(
     h("h1", {}, promptTitle(prompt)),
-    h("div", { class: "dash-meta test-meta" }, [code && prompt.language, (!proofread || prompt.has_audio) && lengthText(prompt.duration), prompt.speech_model, timingText(prompt.timing)].filter(Boolean).join(" · ")),
+    h("div", { class: "dash-meta test-meta" }, [code && prompt.language, pickedWords(prompt.picked), (!proofread || prompt.has_audio) && lengthText(prompt.duration), prompt.speech_model, timingText(prompt.timing)].filter(Boolean).join(" · ")),
   );
   $("#prompt-top-actions").replaceChildren(
     working
@@ -2743,12 +2750,12 @@ function drawPrompt() {
           }, "Add it"),
       ),
     ),
-    (!proofread || prompt.has_audio) && h(
+    (!proofread || prompt.has_audio || prompt.picked) && h(
       "section",
       { class: "card" },
-      h("h2", {}, proofread ? "What you said about how" : "What you said"),
+      h("h2", {}, proofread ? (prompt.picked ? "What you asked for" : "What you said about how") : "What you said"),
       h("textarea", { id: "prompt-spoken", rows: Math.min(10, Math.max(3, Math.ceil(prompt.spoken_text.length / 70))), value: prompt.spoken_text, oninput: (event) => { prompt.spoken_text = event.target.value; savePromptField(prompt.id, "spoken", prompt.spoken_text); showWriteAgain(prompt); } }),
-      h("div", { class: "help" }, checking ? "If it misheard you, fix it here." : proofread ? "Fix or change it here, then press Proofread again. Leave it empty to just proofread." : "If it misheard you, fix it here and press Write again."),
+      h("div", { class: "help" }, checking ? "If it misheard you, fix it here." : prompt.picked ? `What you typed or said on the card, along with ${pickedWords(prompt.picked)}. Change it here, then press Proofread again.` : proofread ? "Fix or change it here, then press Proofread again. Leave it empty to just proofread." : "If it misheard you, fix it here and press Write again."),
     ),
     prompt.text.length > 0 && h(
       "section",
@@ -3102,7 +3109,7 @@ function welcome() {
       h("li", {}, h("strong", {}, "Solo note"), " ", h("kbd", {}, S.settings?.hotkey_solo || ""), " records only your mic, for thinking out loud."),
       h("li", {}, h("strong", {}, "Prompt"), " ", h("kbd", {}, S.settings?.hotkey_prompt || ""), " turns what you say and copy into a prompt to paste."),
       h("li", {}, h("strong", {}, "Code"), " ", h("kbd", {}, S.settings?.hotkey_code || ""), " does the same, but you get the code itself, and nothing else, to paste and run."),
-      h("li", {}, h("strong", {}, "Proofread"), " ", h("kbd", {}, S.settings?.hotkey_proofread || ""), ": copy some text, say how you want it edited if you like, and you get it back edited, and nothing else, to paste. ", h("kbd", {}, S.settings?.hotkey_proofread_text || ""), " does it without the mic, in one press."),
+      h("li", {}, h("strong", {}, "Proofread"), " ", h("kbd", {}, S.settings?.hotkey_proofread || ""), ": copy some text and choose how to edit it on the card that opens, and you get it back edited, and nothing else, to paste. ", h("kbd", {}, S.settings?.hotkey_proofread_text || ""), " does a plain proofread in one press."),
       h("li", {}, "Start any of them from the top of the sidebar, or with its shortcut from anywhere."),
       h("li", {}, "The audio stays on this PC.", engine && [" The transcript goes to ", h("strong", {}, engine), " to write the notes or the prompt."]),
       h("li", {}, "Closing the window leaves it running in the tray, next to the clock, so the shortcuts keep working."),
@@ -3564,7 +3571,7 @@ async function renderSettings(main) {
       "section",
       { class: "card" },
       h("h2", {}, "Proofread"),
-      h("div", { class: "help" }, "Proofreads what you copy, and you get only the edited text on your clipboard. Its shortcut listens like a prompt, with the same speech model, so you can say how you want it edited, and finishing straight away is a plain proofread. The one without talking takes what you copied in the last 15 seconds, or waits a minute for you to copy something, so it never sends what was just sitting on the clipboard."),
+      h("div", { class: "help" }, "Edits what you copy, and you get only the edited text on your clipboard. Its shortcut opens a card for choosing how: Polish with a formality, tone and length, Fill in [[blanks]], Format into a table or list, or Translate, and a box to type or say anything else, with the same speech model as prompts. Both shortcuts take what you copied in the last 15 seconds, or wait a minute for you to copy something, so they never send what was just sitting on the clipboard."),
       proofreadFields,
       textField("How you like your text edited", "proofread_extra", "Optional. The proofreader follows this every time.", 2, "American spelling. Keep it casual."),
     ),
@@ -3582,8 +3589,8 @@ async function renderSettings(main) {
       hotkeyField("hotkey_solo", "Start a solo note, then pause and resume it", "Records only your mic, for talking through your own thoughts."),
       hotkeyField("hotkey_prompt", "Start a prompt, then pause and resume it", "Pause to read on or to think. Nothing is recorded while paused."),
       hotkeyField("hotkey_code", "Start code, then pause and resume it", "The same as a prompt, but you get the code itself."),
-      hotkeyField("hotkey_proofread", "Proofread, saying how if you like", "Copy the text, press this, say how you want it edited or nothing at all, then press Finish. Pressing it again pauses, like a prompt. During a recording it proofreads without listening."),
-      hotkeyField("hotkey_proofread_text", "Proofread without talking", "One press, no mic: it proofreads what you just copied."),
+      hotkeyField("hotkey_proofread", "Proofread, choosing how", "Copy the text and press this. A card opens beside your mouse: pick how, then press Enter, or Esc to close it. Pressing it again while the card is open starts and stops its mic. During a recording the mic is the recording's, so type instead."),
+      hotkeyField("hotkey_proofread_text", "Proofread at once", "One press, no card: a plain proofread of what you just copied."),
       hotkeyField("hotkey_finish", "Finish", "Ends whatever is going. A prompt then gets written, and a note gets made."),
       h(
         "div",

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Brushtalk edit card</title>
+    <link rel="stylesheet" href="/static/ink.css" />
+    <link rel="stylesheet" href="/static/picker.css" />
+    <script src="/static/ink.js"></script>
+  </head>
+  <body>
+    <!-- The edit card. It opens beside the mouse when you press the Proofread shortcut: pick the kind of edit and any options, or type or say how. -->
+    <main id="card" tabindex="-1">
+      <header id="head">
+        <canvas id="seal" class="glyph pywebview-drag-region" width="192" height="192"></canvas>
+        <div id="what" class="pywebview-drag-region">
+          <div id="title" class="pywebview-drag-region">Edit what you copied</div>
+          <div id="copied" class="pywebview-drag-region"></div>
+        </div>
+        <button id="close" class="round plain" title="Close (Esc)" aria-label="Close"></button>
+      </header>
+      <div id="tiles" role="radiogroup" aria-label="What kind of edit"></div>
+      <div id="about"></div>
+      <div id="options"></div>
+      <div id="blanks" class="row" hidden><span class="label">Blanks</span><div id="blanks-text"></div></div>
+      <div id="say">
+        <textarea id="asked" rows="1" spellcheck="true" aria-label="How you want it edited"></textarea>
+        <button id="mic" title="Say it" aria-label="Say it"></button>
+      </div>
+      <div id="listening" hidden><canvas id="level"></canvas><span id="listening-text"></span></div>
+      <div id="message" hidden></div>
+      <footer>
+        <div id="summary"></div>
+        <button id="go">Edit <span class="enter">↵</span></button>
+      </footer>
+      <div id="keys">1–4 picks the kind · start typing to say how · Enter edits · Esc closes</div>
+    </main>
+    <script src="/static/picker.js"></script>
+  </body>
+</html>

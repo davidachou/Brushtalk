@@ -41,7 +41,12 @@ kernel32.GlobalFree.restype = wintypes.HGLOBAL
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 PRIVATE = user32.RegisterClipboardFormatW("ExcludeClipboardContentFromMonitorProcessing")
+# The formatted copy that email, Teams and Word paste, and that browsers hand to pages such as Gmail.
+CF_HTML = user32.RegisterClipboardFormatW("HTML Format")
 POLL_SECONDS = 0.25
+HTML_HEADER = "Version:0.9\r\nStartHTML:{:010d}\r\nEndHTML:{:010d}\r\nStartFragment:{:010d}\r\nEndFragment:{:010d}\r\n"
+HTML_BEFORE = "<html><body>\r\n<!--StartFragment-->"
+HTML_AFTER = "<!--EndFragment-->\r\n</body></html>"
 
 
 def sequence_number() -> int:
@@ -80,26 +85,51 @@ def read_text() -> str | None:
         user32.CloseClipboard()
 
 
-def write_text(text: str) -> bool:
-    """The new text is made ready before the clipboard is emptied, so a write that can't happen leaves what you had copied."""
-    data = ctypes.create_unicode_buffer(text)
-    size = ctypes.sizeof(data)
+def html_format(fragment: str) -> bytes:
+    """Windows' HTML on the clipboard: a header saying where, in bytes, the page and the piece of it to paste start and end."""
+    start_html = len(HTML_HEADER.format(0, 0, 0, 0))
+    start_fragment = start_html + len(HTML_BEFORE.encode("utf-8"))
+    end_fragment = start_fragment + len(fragment.encode("utf-8"))
+    end_html = end_fragment + len(HTML_AFTER.encode("utf-8"))
+    return (HTML_HEADER.format(start_html, end_html, start_fragment, end_fragment) + HTML_BEFORE + fragment + HTML_AFTER).encode("utf-8") + b"\0"
+
+
+def _memory(data) -> int | None:
+    """A copy of the data in memory the clipboard can take over, or None if there's none to be had."""
+    size = ctypes.sizeof(data) if not isinstance(data, bytes) else len(data)
     handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, size)
     pointer = kernel32.GlobalLock(handle) if handle else None
     if not pointer:
         if handle:
             kernel32.GlobalFree(handle)
-        return False
+        return None
     ctypes.memmove(pointer, data, size)
     kernel32.GlobalUnlock(handle)
+    return handle
+
+
+def write_text(text: str, html: str | None = None) -> bool:
+    """The new text is made ready before the clipboard is emptied, so a write that can't happen leaves what you had copied. With html, a formatted
+    copy goes on beside the text: apps that take formatting paste that, and the rest paste the text. Says whether the text got there."""
+    handle = _memory(ctypes.create_unicode_buffer(text))
+    if not handle:
+        return False
+    formatted = _memory(html_format(html)) if html is not None else None
     if not _open():
-        kernel32.GlobalFree(handle)
+        for memory in (handle, formatted):
+            if memory:
+                kernel32.GlobalFree(memory)
         return False
     try:
         user32.EmptyClipboard()
         if not user32.SetClipboardData(CF_UNICODETEXT, handle):
             kernel32.GlobalFree(handle)
+            if formatted:
+                kernel32.GlobalFree(formatted)
             return False
+        # Without it, the text is still there to paste.
+        if formatted and not user32.SetClipboardData(CF_HTML, formatted):
+            kernel32.GlobalFree(formatted)
         return True
     finally:
         user32.CloseClipboard()
@@ -149,9 +179,9 @@ class Watcher(threading.Thread):
             return None
         return text
 
-    def write(self, text: str) -> bool:
+    def write(self, text: str, html: str | None = None) -> bool:
         """The app's own writing doesn't count as you copying something."""
-        written = write_text(text)
+        written = write_text(text, html)
         self.seen = sequence_number()
         self.changed_at = None
         return written

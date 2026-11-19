@@ -36,10 +36,15 @@ Open **Brushtalk** from the Start menu. It lives in the tray, by the clock, so t
 | **Code** | Your mic, and text you copy | Ctrl+Alt+C | The code, ready to paste |
 | **Proofread** | Text you copy, and your mic if you want to say how | Ctrl+Alt+P | The edited text, ready to paste |
 
-Press a shortcut again to pause, or to stop a meeting. **Ctrl+Alt+Enter** finishes whichever is going, and
-**Ctrl+Alt+Shift+P** proofreads what you just copied without listening. Everything else is in **Settings**: the microphone, the
-shortcuts, which AI writes, Traditional or Simplified Chinese, the look and the sounds. The checks at the top of Settings say if
-anything's missing.
+Press a shortcut again to pause, or to stop a meeting. **Ctrl+Alt+Enter** finishes whichever is going. Everything else is in
+**Settings**: the microphone, the shortcuts, which AI writes, Traditional or Simplified Chinese, the look and the sounds. The checks
+at the top of Settings say if anything's missing.
+
+**Proofread** opens a card beside your mouse for choosing how. **Polish** fixes mistakes and awkward wording, and can change the
+formality, tone or length too. **Fill in** writes only what each note in double brackets asks for, such as
+`[[thank them for coming]]`. **Format** makes a table, a list, steps or an email layout, and **Translate** puts it into English or
+繁體中文. Type anything else in the box at the bottom, or press its mic, or Ctrl+Alt+P again, and say it. Then press **Enter**, and
+when the bar says it's ready, paste with Ctrl+V. **Ctrl+Alt+Shift+P** proofreads what you copied at once, without the card.
 
 ## Your privacy
 

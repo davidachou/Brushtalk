@@ -49,7 +49,19 @@ TRAY_WORDS = {
     "empty": "Brushtalk: nothing to paste",
 }
 ON_SCREEN = (("bar", "The full bar"), ("mark", "Low key: a tiny character"), ("tray", "Low key: only the tray icon"))
+# The edit card, in units before Windows scales them. Its page says how tall it is.
+PICKER_WIDTH = 540
+PICKER_HEIGHT = 440
+PICKER_SHORTEST, PICKER_TALLEST = 200, 760
+PICKER_GAP = 14  # from the mouse
+# Where you'll paste, going by the program you were in. Anything not listed gets the formatted copy, with plain text beside it for apps that can't
+# take formatting: email, Teams, Word and browsers all can. Slack can't show a table in a message.
+PASTE_INTO = {"slack.exe": "slack", "notepad.exe": "plain", "notepad++.exe": "plain", "windowsterminal.exe": "plain", "wt.exe": "plain", "cmd.exe": "plain", "powershell.exe": "plain", "pwsh.exe": "plain", "conhost.exe": "plain", "line.exe": "plain", "code.exe": "plain", "cursor.exe": "plain"}
+APP_NAMES = {"outlook.exe": "Outlook", "olk.exe": "Outlook", "winword.exe": "Word", "ms-teams.exe": "Teams", "teams.exe": "Teams", "slack.exe": "Slack", "chrome.exe": "Chrome", "msedge.exe": "Edge", "firefox.exe": "Firefox", "notepad.exe": "Notepad", "notepad++.exe": "Notepad++", "line.exe": "LINE", "code.exe": "VS Code", "cursor.exe": "Cursor", "windowsterminal.exe": "Terminal", "wt.exe": "Terminal", "excel.exe": "Excel", "onenote.exe": "OneNote", "powerpnt.exe": "PowerPoint", "explorer.exe": "File Explorer"}
 SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+MDT_EFFECTIVE_DPI = 0
+GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = -20, 0x80, 0x40000
 CORNERS = 33  # how Windows rounds a window's corners
 CORNERS_DEFAULT, CORNERS_ROUND = 0, 2
 MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTOPRIMARY = 0, 1
@@ -74,6 +86,67 @@ screens.MonitorFromPoint.restype = wintypes.HANDLE
 screens.MonitorFromRect.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD]
 screens.MonitorFromRect.restype = wintypes.HANDLE
 screens.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+screens.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+screens.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+screens.GetWindowThreadProcessId.restype = wintypes.DWORD
+screens.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+screens.SetForegroundWindow.argtypes = [wintypes.HWND]
+screens.BringWindowToTop.argtypes = [wintypes.HWND]
+screens.GetForegroundWindow.restype = wintypes.HWND
+screens.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+screens.GetWindowLongW.restype = ctypes.c_long
+screens.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+processes = ctypes.WinDLL("kernel32")
+processes.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+processes.OpenProcess.restype = wintypes.HANDLE
+processes.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+processes.CloseHandle.argtypes = [wintypes.HANDLE]
+processes.GetCurrentThreadId.restype = wintypes.DWORD
+
+
+def window_program(window) -> str:
+    """The file name of the program a window belongs to, such as OUTLOOK.EXE, or "" if Windows won't say."""
+    if not window:
+        return ""
+    pid = wintypes.DWORD()
+    screens.GetWindowThreadProcessId(window, ctypes.byref(pid))
+    handle = processes.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(1024)
+        name = ctypes.create_unicode_buffer(size.value)
+        return Path(name.value).name if processes.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size)) else ""
+    finally:
+        processes.CloseHandle(handle)
+
+
+def paste_target(program: str) -> dict:
+    """What the edit card says you were in, and where it guesses you'll paste: "email" for a formatted copy, "slack" or "plain"."""
+    name = program.lower()
+    return {"app": APP_NAMES.get(name, Path(program).stem if program else ""), "dest": PASTE_INTO.get(name, "email")}
+
+
+def picker_place(cursor: tuple[int, int], size: tuple[int, int], area: tuple[int, int, int, int], gap: int) -> tuple[int, int, bool]:
+    """Where the edit card opens: below and right of the mouse, or above or to the left where there isn't room, and all of it on the screen.
+    The last value says whether it's below the mouse, so that as it grows it grows away from it."""
+    (x, y), (width, height) = cursor, size
+    left = x + gap if x + gap + width <= area[2] else x - gap - width
+    below = y + gap + height <= area[3]
+    top = y + gap if below else y - gap - height
+    return (*kept_on_screen(left, top, width, height, area), below)
+
+
+def _monitor_scale(monitor) -> float:
+    """How much Windows scales things up on that screen."""
+    dpi_x, dpi_y = wintypes.UINT(), wintypes.UINT()
+    try:
+        scaling = ctypes.WinDLL("shcore")
+        scaling.GetDpiForMonitor.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT)]
+        scaling.GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, ctypes.byref(dpi_x), ctypes.byref(dpi_y))
+    except OSError:
+        return 1.0
+    return (dpi_x.value or 96) / 96
 
 
 def _work_area(monitor) -> tuple[int, int, int, int]:
@@ -347,7 +420,12 @@ class Desktop:
         self.full_bar: tuple[float, float] | None = None
         self.prompt_settled = False  # a finished prompt has had its time on screen
         self.tray_state = "idle"
+        self.picker_window = None
+        self.picker_target = None  # the window you were in when the edit card opened, to go back to
+        self.picker_height = PICKER_HEIGHT
+        self.picker_below = True
         controller.play_sound = sounds.play
+        controller.which_app = self._which_app
         controller.listeners.append(self._on_event)
 
     # ------------------------------------------------------------- window control
@@ -499,7 +577,9 @@ class Desktop:
         # A prompt can finish behind a meeting. The bar then belongs to the meeting, with its Stop button and its warnings, and the tray tells you.
         if self.controller.is_recording():
             what = {"code": "code", "proofread": "edited text"}.get(self.controller.prompt_kind, "prompt")
-            if stage == "copy":
+            if stage == "copy" and self.controller.prompt_copy_for == "picker":
+                self.notify("Copy the text to edit, and the edit card opens.")
+            elif stage == "copy":
                 self.notify("Copy the text to proofread. It isn't listening while you record.")
             elif stage == "writing" and self.controller.prompt_kind == "proofread":
                 self.notify("Proofreading what you copied. It isn't listening while you record.")
@@ -545,13 +625,113 @@ class Desktop:
             self.hide_mini()
         self._refresh_tray()
 
+    # ------------------------------------------------------------- the edit card
+
+    def _own(self, window) -> bool:
+        return any(item and item.native and window == item.native.Handle.ToInt64() for item in (self.main, self.mini, self.picker_window))
+
+    def _which_app(self) -> dict:
+        """Asked as the card opens, before it takes the keyboard: the window you were in, to go back to, and where you're likely to paste."""
+        window = user32.GetForegroundWindow()
+        if self.main and self.main.native and window == self.main.native.Handle.ToInt64():
+            self.picker_target = window
+            return {"app": "Brushtalk", "dest": "email"}
+        # Clicking the bar can leave it in front. Where you were before that still counts.
+        self.picker_target = self.prompt_target if self._own(window) else window
+        return paste_target(window_program(self.picker_target))
+
+    def _on_picker_thread(self, action) -> None:
+        from System import Func, Type
+
+        self.picker_window.native.Invoke(Func[Type](action))
+
+    def _show_picker(self) -> None:
+        """Beside the mouse, on whichever screen it's on, and with the keyboard, so you can pick with keys and type straight away."""
+        if not self.picker_window:
+            return
+        from System.Drawing import Size
+
+        point = wintypes.POINT()
+        screens.GetCursorPos(ctypes.byref(point))
+        monitor = screens.MonitorFromPoint(point, MONITOR_DEFAULTTOPRIMARY)
+        scale = _monitor_scale(monitor)
+        width, height = round(PICKER_WIDTH * scale), round(self.picker_height * scale)
+        x, y, self.picker_below = picker_place((point.x, point.y), (width, height), _work_area(monitor), round(PICKER_GAP * scale))
+
+        def show():
+            form = self.picker_window.native
+            handle = form.Handle.ToInt64()
+            form.MinimumSize = Size(0, 0)
+            user32.SetWindowPos(wintypes.HWND(handle), None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE)
+            form.Show()
+            form.Activate()
+            if screens.GetForegroundWindow() != handle:
+                # It opened after a copy landed rather than straight after the shortcut, and Windows only lets the app you last used take the
+                # keyboard. Joining that app's input for a moment lets it through.
+                ours = processes.GetCurrentThreadId()
+                theirs = screens.GetWindowThreadProcessId(screens.GetForegroundWindow(), None)
+                joined = theirs and theirs != ours and screens.AttachThreadInput(ours, theirs, True)
+                screens.BringWindowToTop(handle)
+                screens.SetForegroundWindow(handle)
+                if joined:
+                    screens.AttachThreadInput(ours, theirs, False)
+            form.browser.webview.Focus()
+
+        # Its page has just been told it's open. Shown any sooner, it would show what it showed last time.
+        time.sleep(BAR_REDRAW)
+        self._on_picker_thread(show)
+
+    def _hide_picker(self) -> None:
+        """And back to where you were, so that Ctrl+V lands there."""
+        if not self.picker_window:
+            return
+        self._on_picker_thread(self.picker_window.native.Hide)
+        if self.picker_target:
+            user32.SetForegroundWindow(self.picker_target)
+            self.prompt_target = self.picker_target
+
+    def fit_picker(self, height: int) -> None:
+        """Its page says how tall the card is. It grows away from the mouse, and stays on the screen."""
+        self.picker_height = max(PICKER_SHORTEST, min(int(height), PICKER_TALLEST))
+        if not self.picker_window:
+            return
+
+        def fit():
+            form = self.picker_window.native
+            handle = wintypes.HWND(form.Handle.ToInt64())
+            scale = (user32.GetDpiForWindow(handle) or 96) / 96
+            width, height = round(PICKER_WIDTH * scale), round(self.picker_height * scale)
+            top = form.Top if self.picker_below else form.Bottom - height
+            area = area_under(form.Left, top, form.Left + width, top + height) or main_area()
+            x, y = kept_on_screen(form.Left, top, width, height, area)
+            user32.SetWindowPos(handle, None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE)
+
+        self._on_picker_thread(fit)
+
+    def _prepare_picker(self) -> None:
+        """Rounded like Windows 11's own popups, and kept off the taskbar: it's only ever up for a moment."""
+
+        def setup():
+            handle = self.picker_window.native.Handle.ToInt64()
+            # A tool window, which the taskbar and Alt+Tab leave out. Set this way rather than through the form, which would make its window again.
+            style = screens.GetWindowLongW(handle, GWL_EXSTYLE)
+            screens.SetWindowLongW(handle, GWL_EXSTYLE, (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
+            corners = ctypes.c_int(CORNERS_ROUND)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(wintypes.HWND(handle), CORNERS, ctypes.byref(corners), ctypes.sizeof(corners))
+
+        try:
+            self.picker_window.events.loaded.wait(15)
+            self._on_picker_thread(setup)
+        except Exception:
+            log.exception("Preparing the edit card failed")
+
     def quit(self) -> None:
         def finish():
             self.quitting = True
             self.controller.shutdown()
             if self.tray:
                 self.tray.stop()
-            for window in (self.mini, self.main):
+            for window in (self.picker_window, self.mini, self.main):
                 if window:
                     try:
                         window.destroy()
@@ -646,8 +826,8 @@ class Desktop:
             pystray.MenuItem("Record a solo note", lambda icon, item: self._toggle("solo"), enabled=nothing_listening),
             pystray.MenuItem("Dictate a prompt", lambda icon, item: self._toggle("prompt"), enabled=nothing_listening),
             pystray.MenuItem("Dictate code", lambda icon, item: self._toggle("code"), enabled=nothing_listening),
-            pystray.MenuItem("Proofread", lambda icon, item: self._toggle("proofread"), enabled=lambda item: not self.controller.prompt_recorder),
-            pystray.MenuItem("Proofread without talking", lambda icon, item: self._proofread(), enabled=lambda item: not self.controller.prompt_recorder),
+            pystray.MenuItem("Proofread, choosing how", lambda icon, item: self._open_picker(), enabled=lambda item: not self.controller.prompt_recorder),
+            pystray.MenuItem("Proofread at once", lambda icon, item: self._proofread(), enabled=lambda item: not self.controller.prompt_recorder),
             pystray.MenuItem("Throw this one away", lambda icon, item: self.controller.drop_prompt(), visible=lambda item: bool(self.controller.prompt_recorder)),
             # For low key with only the tray: the bar's Undo isn't there to press.
             pystray.MenuItem("Bring back the one you cancelled", lambda icon, item: self._undo_cancel(), visible=lambda item: self.controller.prompt_stage == "cancelled"),
@@ -693,6 +873,21 @@ class Desktop:
         except Exception as exc:
             log.exception("Proofreading failed")
             self.controller.sound_when_quiet("problem")
+            self.notify(str(exc))
+
+    def _picker_key(self) -> None:
+        try:
+            self.controller.picker_key()
+        except Exception as exc:
+            log.exception("The edit card's shortcut failed")
+            self.controller.sound_when_quiet("problem")
+            self.notify(str(exc))
+
+    def _open_picker(self) -> None:
+        try:
+            self.controller.open_picker()
+        except Exception as exc:
+            log.exception("Opening the edit card failed")
             self.notify(str(exc))
 
     def _undo_cancel(self) -> None:
@@ -748,6 +943,8 @@ class Desktop:
                 self._on_screen_changed()
         elif event == "prompt_stage":
             self._on_prompt_stage(data.get("stage"))
+        elif event == "picker":
+            (self._show_picker if data.get("open") else self._hide_picker)()
         self._refresh_tray()
 
     # ------------------------------------------------------------- start
@@ -764,6 +961,7 @@ class Desktop:
         self._start_tray()
         self._paint_title_bar()
         self._prepare_bar()
+        self._prepare_picker()
         if self.controller.is_recording():
             self.show_mini()
 
@@ -778,7 +976,7 @@ class Desktop:
                 "hotkey_solo": (settings["hotkey_solo"], lambda: self._toggle("solo")),
                 "hotkey_prompt": (settings["hotkey_prompt"], lambda: self._toggle("prompt")),
                 "hotkey_code": (settings["hotkey_code"], lambda: self._toggle("code")),
-                "hotkey_proofread": (settings["hotkey_proofread"], lambda: self._toggle("proofread")),
+                "hotkey_proofread": (settings["hotkey_proofread"], self._picker_key),
                 "hotkey_proofread_text": (settings["hotkey_proofread_text"], self._proofread),
                 "hotkey_finish": (settings["hotkey_finish"], self._finish),
             }
@@ -816,6 +1014,20 @@ class Desktop:
             on_top=True,
             hidden=True,
             focus=False,
+            resizable=False,
+            background_color=window_color,
+            shadow=True,
+        )
+        # Made now and kept hidden, so it opens at once when you ask for it. Dragged by its title, so the rest of it can be clicked.
+        self.picker_window = webview.create_window(
+            "Brushtalk edit card",
+            self.base_url.replace("/?", "/picker?"),
+            width=PICKER_WIDTH,
+            height=PICKER_HEIGHT,
+            frameless=True,
+            easy_drag=False,
+            on_top=True,
+            hidden=True,
             resizable=False,
             background_color=window_color,
             shadow=True,

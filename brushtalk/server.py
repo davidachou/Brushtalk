@@ -111,6 +111,10 @@ def create_app(controller: Controller, token: str, port: int, desktop=None) -> F
     def mini():
         return page("mini.html")
 
+    @app.get("/picker")
+    def picker_page():
+        return page("picker.html")
+
     app.mount("/static", StaticFiles(directory=UI_DIR), name="static")
 
     # ------------------------------------------------------------- recording
@@ -413,6 +417,29 @@ def create_app(controller: Controller, token: str, port: int, desktop=None) -> F
     def proofread(body: dict = Body(default={})):
         return controller.proofread(str(body.get("text", "")))
 
+    # The edit card: open it, listen, edit or close. Its page says how tall it is, so its window fits it.
+    @app.post("/api/picker")
+    def picker(body: dict = Body(...)):
+        action = body.get("action")
+        if action == "open":
+            return controller.open_picker(str(body.get("text", "")))
+        if action == "edit":
+            choices = body.get("choices")
+            return controller.picker_edit(choices if isinstance(choices, dict) else {}, str(body.get("asked", "")))
+        if action == "listen":
+            return controller.picker_listen()
+        if action == "close":
+            controller.close_picker()
+            return {"ok": True}
+        if action == "size":
+            height = body.get("height")
+            if not isinstance(height, (int, float)):
+                raise HTTPException(400, "A height is needed.")
+            if desktop:
+                desktop.fit_picker(int(height))
+            return {"ok": True}
+        raise HTTPException(400, "Unknown action.")
+
     @app.post("/api/prompts/stop")
     def prompt_stop():
         return {"id": controller.stop_prompt()}
@@ -545,7 +572,7 @@ def create_app(controller: Controller, token: str, port: int, desktop=None) -> F
 
     @app.get("/api/instructions-preview/{which}")
     def preview_instructions(which: str):
-        if which in ("prompt", "code", "proofread"):
+        if which in ("prompt", "code", "proofread", "picker", "picker_fill"):
             return {"text": prompts.sample_request(controller.settings, which)}
         if which in ("meeting", "solo"):
             return {"text": notes.sample_prompt(controller.settings, which)}
@@ -652,7 +679,7 @@ def create_app(controller: Controller, token: str, port: int, desktop=None) -> F
                 changed.clear()
                 snapshot = controller.snapshot()
                 await ws.send_json(snapshot)
-                busy = snapshot["recording"]["active"] or snapshot["audio_test"] or snapshot["model_test"]["recording"] or snapshot["prompt"]["recording"]
+                busy = snapshot["recording"]["active"] or snapshot["audio_test"] or snapshot["model_test"]["recording"] or snapshot["prompt"]["recording"] or (snapshot["picker"] or {}).get("listening")
                 try:
                     await asyncio.wait_for(changed.wait(), 0.08 if busy else 0.5)
                 except TimeoutError:

@@ -17,6 +17,7 @@ import logging
 import re
 import secrets
 import shutil
+import textwrap
 import threading
 import time
 from collections import Counter
@@ -26,7 +27,7 @@ from pathlib import Path
 
 from send2trash import send2trash
 
-from . import instructions, notes
+from . import formatting, instructions, notes
 from .config import DATA, write_json
 from .storage import ID_RE, finalize_audio, holds_audio
 from .transcript import fmt_time
@@ -82,6 +83,30 @@ PROOFREAD_SCHEMA = {
     "properties": {"text": {"type": "string"}},
 }
 
+# Fill in: only what goes in each blank, so nothing outside them can change. The app puts them in place.
+FILL_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["blanks"],
+    "properties": {"blanks": {"type": "array", "items": {"type": "string"}}},
+}
+
+# The edit card: the kinds of edit, and the choices that go with each. A choice left out is As written.
+PICK_JOBS = ("polish", "fill", "format", "translate")
+PICK_CHOICES = {
+    "formality": ("casual", "neutral", "professional"),
+    "tone": ("warm", "tactful", "playful", "wry", "sarcastic", "firm", "demanding"),
+    "length": ("shorter", "longer"),
+    "into": ("table", "list", "steps", "email"),
+    "dest": ("email", "slack", "plain"),
+    "lang": ("english", "chinese"),
+}
+PICK_KEYS = {"polish": ("formality", "tone", "length"), "fill": (), "format": ("into", "dest"), "translate": ("lang", "formality", "tone", "length")}
+# Single brackets turn up in real messages and in code, so only double ones are blanks.
+BLANK = re.compile(r"\[\[(.+?)\]\]", re.DOTALL)
+NUMBERED_FILL = re.compile(r"\A\s*\[\[\s*(?:\d+\s*:\s*)?(.*?)\s*\]\]\s*\Z", re.DOTALL)
+SENTENCE_ENDS = ".!?。！？"
+
 # Words worth a second look, because a mishearing or an over-eager rewrite could turn into a real action.
 RISKY = {
     "delete": r"\b(delet\w*|eras\w*|wip(?:e|es|ing)\b|purg\w*|drop table)\b|刪除|删除|刪掉|删掉|移除|清除|清空",
@@ -109,6 +134,11 @@ SAYS_NOT = re.compile(r"(?:\b(?:not|never|no|without|avoid|stop|cannot|(?:do|doe
 
 def prompts_dir() -> Path:
     return DATA / "prompts"
+
+
+def picker_dir() -> Path:
+    """Where the edit card keeps what you say to it while it turns it into words. Nothing in it is kept."""
+    return DATA / "picker"
 
 
 def folder(prompt_id: str) -> Path:
@@ -324,16 +354,119 @@ def build_code_request(meta: dict, terms: str, extra: str, script: str = "tradit
     return _with_everything(parts, meta)
 
 
-def build_proofread_request(text: str, terms: str, extra: str, said: str = "") -> str:
-    parts = [instructions.get("proofread_writer")]
+def blanks(text: str) -> list[str]:
+    """What each [[blank]] in the text asks for, in order."""
+    return [match[1].strip() for match in BLANK.finditer(text)]
+
+
+def clean_picked(choices) -> dict:
+    """What was chosen on the edit card, keeping only what goes with that kind of edit, and only values it knows, so nothing else can get into
+    the request by this way. Format and Translate always say into what."""
+    choices = choices if isinstance(choices, dict) else {}
+    job = choices.get("job") if choices.get("job") in PICK_JOBS else "polish"
+    picked = {"job": job}
+    for key in PICK_KEYS[job]:
+        if choices.get(key) in PICK_CHOICES[key]:
+            picked[key] = choices[key]
+    if job == "format":
+        picked.setdefault("into", "table")
+        picked.setdefault("dest", "email")
+    elif job == "translate":
+        picked.setdefault("lang", "english")
+    return picked
+
+
+def number_blanks(text: str) -> str:
+    """[[1: what it asks]], [[2: ...]], so each reply can be matched to its blank."""
+    count = iter(range(1, len(text) + 2))
+    return BLANK.sub(lambda match: f"[[{next(count)}: {match[1].strip()}]]", text)
+
+
+def fill_blanks(text: str, fills: list[str]) -> str:
+    """Puts each reply where its blank was, so not a character outside the blanks can change. Raises ValueError if the count doesn't match."""
+    found = list(BLANK.finditer(text))
+    if len(fills) != len(found):
+        raise ValueError(f"{len(fills)} replies for {len(found)} blanks")
+    out, at = [], 0
+    for match, fill in zip(found, fills):
+        piece = _fitted(text, match, fill)
+        out += [text[at : match.start()], piece]
+        at = match.end()
+        # A reply that ends its sentence right where the text already does would end it twice, as in "Would that work?."
+        if piece.rstrip() and piece.rstrip()[-1] in SENTENCE_ENDS and at < len(text) and text[at] in SENTENCE_ENDS:
+            at += 1
+    return "".join(out + [text[at:]])
+
+
+def _fitted(text: str, match: re.Match, fill: str) -> str:
+    """A blank in the middle of a line takes its reply as it is. One on a line of its own, as in code, takes it as lines, each indented to sit
+    there, whether the reply came with that indentation or without it."""
+    wrapped = NUMBERED_FILL.match(fill)
+    if wrapped:
+        # It sent the blank back filled in, brackets, number and all.
+        fill = wrapped[1]
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = fill.replace("\r\n", "\n").strip("\n").split("\n")
+    start = text.rfind("\n", 0, match.start()) + 1
+    end = text.find("\n", match.end())
+    indent, after = text[start : match.start()], text[match.end() : len(text) if end < 0 else end]
+    if indent.strip() or after.strip():
+        return newline.join(lines)
+    first = lines[0][: len(lines[0]) - len(lines[0].lstrip())]
+    if indent and len(first) >= len(indent):
+        # Written with the indentation it needs there. The line already has the first line's, before the blank.
+        lines[0] = lines[0][len(indent) :] if lines[0].startswith(indent) else lines[0].lstrip()
+        return newline.join(lines)
+    if indent and _rest_already_indented(lines, len(indent)):
+        # The first line written to follow the blank's indentation, and the rest with all of theirs.
+        return newline.join([lines[0].lstrip()] + lines[1:])
+    lines = textwrap.dedent("\n".join(lines)).split("\n")
+    return newline.join([lines[0]] + [indent + line if line.strip() else line for line in lines[1:]])
+
+
+OPENS_BLOCK = re.compile(r"[:{(\[]\s*(?:(?:#|//).*)?$")
+
+
+def _rest_already_indented(lines: list[str], indent: int) -> bool:
+    """Whether the lines after a bare first line already carry the blank's indentation. Lines after one that opens a block, such as
+    "for row in rows:", sit a level further in either way, so then only being further in than the blank itself counts."""
+    rest = [line for line in lines[1:] if line.strip()]
+    if not rest:
+        return False
+    nearest = len(rest[0]) - len(rest[0].lstrip())
+    least = min(len(line) - len(line.lstrip()) for line in rest)
+    return least >= indent and (nearest > indent if OPENS_BLOCK.search(lines[0].rstrip()) else True)
+
+
+def chosen_lines(picked: dict) -> list[str]:
+    """A line for each thing chosen, in the order the card shows them."""
+    keys = [picked.get(key) for key in ("into", "lang", "formality", "tone", "length")]
+    return [instructions.get(f"pick_{key}") for key in keys if key]
+
+
+def build_proofread_request(text: str, terms: str, extra: str, said: str = "", picked: dict | None = None) -> str:
+    """The plain proofread, or what was chosen on the edit card. The proofreader's instructions stay word for word, and the choices come after
+    them, so a choice can't change what a plain proofread does. Fill in has its own instructions and gets the blanks numbered."""
+    picked = clean_picked(picked) if picked else {"job": "polish"}
+    fill = picked["job"] == "fill"
+    if fill:
+        parts = [instructions.get("pick_fill")]
+        text = number_blanks(text)
+    else:
+        parts = [instructions.get("proofread_writer")]
+        if BLANK.search(text):
+            parts.append(instructions.get("pick_blanks"))
     if terms.strip():
         parts.append("Names and terms that may come up:\n" + terms.strip())
     if extra.strip():
         parts.append("Their own preferences for how text is edited:\n" + extra.strip())
+    chosen = chosen_lines(picked)
+    if chosen:
+        parts.append(instructions.get("pick_chose") + "\n" + "\n".join(f"- {line}" for line in chosen))
     # A fresh marker each time, so the text can't pretend to close its own block, or open one for what was said.
     marker = secrets.token_hex(4)
     if said.strip():
-        parts.append(instructions.get("proofread_said"))
+        parts.append(instructions.get("pick_fill_said" if fill else "proofread_said"))
         parts.append(f"<said-{marker}>\n{said.strip()}\n</said-{marker}>")
     parts.append(f"<text-{marker}>\n{text}\n</text-{marker}>")
     return "\n\n".join(parts)
@@ -370,6 +503,11 @@ def sample_request(settings: dict, kind: str = "prompt") -> str:
         return build_code_request(sample, settings.get("terms", ""), settings.get("code_extra", ""), settings.get("chinese_script", "traditional"))
     if kind == "proofread":
         return build_proofread_request("(the text you copied)", settings.get("terms", ""), settings.get("proofread_extra", ""), "(what you said, if you used the shortcut for talking)")
+    if kind == "picker":
+        picked = {"job": "polish", "formality": "professional", "tone": "tactful", "length": "shorter"}
+        return build_proofread_request("(the text you copied, with a [[blank to fill]] in it)", settings.get("terms", ""), settings.get("proofread_extra", ""), "(what you typed or said on the card, if anything)", picked)
+    if kind == "picker_fill":
+        return build_proofread_request("(the text you copied, with a [[first blank]] and a [[second blank]] in it)", settings.get("terms", ""), settings.get("proofread_extra", ""), "(what you typed or said on the card, if anything)", {"job": "fill"})
     return build_request(sample, settings.get("terms", ""), settings.get("prompt_language", "en"), settings.get("prompt_extra", ""), settings.get("prompt_add_knowledge", True))
 
 
@@ -446,26 +584,38 @@ def edits_made(before: str, after: str) -> int | None:
 
 
 def write_proofread(meta: dict, settings: dict, engine: str | None = None, model: str | None = None, effort: str | None = None, on_process=None) -> dict:
-    """One attempt at the edit, following anything you said about how. Raises notes.NotesError with a message fit to show. Nothing gets converted:
-    Chinese stays in whichever characters you wrote it in."""
+    """One attempt at the edit, following what was chosen on the edit card and anything you said about how. Raises notes.NotesError with a
+    message fit to show. Nothing gets converted: Chinese stays in whichever characters you wrote it in."""
     source = original(meta)
     if not source.strip():
         raise notes.NotesError("Nothing was copied to proofread.")
     if len(source) > TEXT_LIMIT:
         raise notes.NotesError(f"Too long: {len(source):,} characters, and the limit is {TEXT_LIMIT:,}. Copy a smaller part.")
-    request = build_proofread_request(source.strip().replace("\r\n", "\n"), settings.get("terms", ""), settings.get("proofread_extra", ""), spoken_text(meta))
+    picked = clean_picked(meta["picked"]) if meta.get("picked") else None
+    fill = bool(picked) and picked["job"] == "fill"
+    wanted = len(blanks(source))
+    if fill and not wanted:
+        raise notes.NotesError("There are no [[blanks]] in it to fill.")
+    request = build_proofread_request(source.strip().replace("\r\n", "\n"), settings.get("terms", ""), settings.get("proofread_extra", ""), spoken_text(meta), picked)
     started = time.perf_counter()
-    data, label, model, effort = _ask(request, settings, "proofread", PROOFREAD_SCHEMA, engine, model, effort, on_process)
-    text = str(data.get("text", ""))
-    if not text.strip():
-        raise notes.NotesError(f"{label} sent back nothing. Try again.")
+    data, label, model, effort = _ask(request, settings, "proofread", FILL_SCHEMA if fill else PROOFREAD_SCHEMA, engine, model, effort, on_process)
+    if fill:
+        fills = [str(item) for item in data.get("blanks") or []]
+        if len(fills) != wanted:
+            raise notes.NotesError(f"{label} sent back {len(fills)} of the {wanted} blanks. Try again.")
+        edited = fill_blanks(source, fills)
+    else:
+        text = str(data.get("text", ""))
+        if not text.strip():
+            raise notes.NotesError(f"{label} sent back nothing. Try again.")
+        edited = fit_like(source, text)
     return {
         "engine": label,
         "model": model,
         "effort": effort or None,
         "seconds": round(time.perf_counter() - started, 1),
-        "title": _title_from(text),
-        "prompt": fit_like(source, text),
+        "title": _title_from(edited),
+        "prompt": edited,
         "added": [],
         "suggestions": [],
         "unsure": [],
@@ -552,6 +702,19 @@ def to_paste(meta: dict) -> str:
         if pasted:
             text = "\n\n---\n\n".join([text, f"{REFERENCE_LABEL}\n\n{pasted[0]}", *pasted[1:]])
     return text
+
+
+def to_clipboard(meta: dict) -> tuple[str, str | None]:
+    """The text to put on the clipboard, and a formatted copy to go beside it, or None. Format's tables and lists are written in Markdown, which
+    pastes as a real table or list into email, Teams and Word from the formatted copy, and as lined-up plain text everywhere else."""
+    text = to_paste(meta)
+    picked = meta.get("picked") or {}
+    if picked.get("job") != "format" or picked.get("into") == "email":
+        return text, None
+    plain = formatting.to_plain(text, slack=picked.get("dest") == "slack")
+    if "\r\n" in original(meta):
+        plain = plain.replace("\n", "\r\n")
+    return plain, formatting.to_html(text) if picked.get("dest", "email") == "email" else None
 
 
 def detail(prompt_id: str) -> dict:
